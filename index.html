@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1f3a5f">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Мои заявки">
+<title>Мои заявки</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<style>
+:root {
+  --bg: #f4f6f9; --card: #fff; --text: #1d2633; --muted: #6b7686; --line: #e3e7ee;
+  --brand: #1f3a5f; --brand-soft: #e6edf6; --ok: #0f7a55; --ok-soft: #e1f5ee;
+  --warn: #9a5b00; --warn-soft: #fff3df; --bad: #b42318; --bad-soft: #fdecea;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #11161d; --card: #1a212b; --text: #e6ebf2; --muted: #93a0b2; --line: #2a3442;
+          --brand: #8fb4e8; --brand-soft: #22324a; --ok: #5dcaa5; --ok-soft: #12352b;
+          --warn: #f0b45a; --warn-soft: #3a2a12; --bad: #f09595; --bad-soft: #3b1a1a; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text);
+       font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+       padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom); }
+header { position: sticky; top: 0; z-index: 2; background: var(--brand); color: #fff; padding: 14px 16px 10px; }
+@media (prefers-color-scheme: dark) { header { background: #1a2a40; } }
+header h1 { margin: 0; font-size: 18px; font-weight: 600; }
+header .sub { font-size: 12px; opacity: .8; margin-top: 2px; }
+main { max-width: 640px; margin: 0 auto; padding: 12px 16px 40px; }
+.tabs { display: flex; gap: 6px; margin: 4px 0 12px; overflow-x: auto; }
+.tab { border: 1px solid var(--line); background: var(--card); color: var(--text); border-radius: 18px;
+       padding: 6px 14px; font: inherit; font-size: 14px; white-space: nowrap; cursor: pointer; }
+.tab.on { background: var(--brand); border-color: var(--brand); color: #fff; }
+@media (prefers-color-scheme: dark) { .tab.on { color: #11161d; } }
+.notice { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px;
+          margin-bottom: 12px; font-size: 14px; }
+.notice button, .btn { margin-top: 8px; border: 0; border-radius: 10px; background: var(--brand); color: #fff;
+          padding: 9px 14px; font: inherit; font-size: 14px; cursor: pointer; }
+@media (prefers-color-scheme: dark) { .notice button, .btn { color: #11161d; } }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; margin-bottom: 10px; overflow: hidden; }
+.card.hot { border-color: var(--warn); }
+.head { padding: 12px 14px; cursor: pointer; display: flex; gap: 10px; align-items: flex-start; }
+.head .main { flex: 1; min-width: 0; }
+.name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
+.meta { color: var(--muted); font-size: 13px; margin-top: 2px; }
+.right { text-align: right; flex-shrink: 0; }
+.sum { font-weight: 600; white-space: nowrap; }
+.was { color: var(--muted); font-size: 12px; text-decoration: line-through; }
+.chip { display: inline-block; font-size: 12px; border-radius: 10px; padding: 1px 8px; margin-top: 4px; }
+.st-work { background: var(--brand-soft); color: var(--brand); }
+.st-transferred { background: var(--ok-soft); color: var(--ok); }
+.st-deleted { background: var(--bad-soft); color: var(--bad); }
+.chg { background: var(--warn-soft); color: var(--warn); }
+.events { border-top: 1px solid var(--line); padding: 4px 14px 10px; display: none; }
+.card.open .events { display: block; }
+.ev { padding: 8px 0; border-bottom: 1px dashed var(--line); }
+.ev:last-child { border-bottom: 0; }
+.ev .t { font-size: 14px; font-weight: 600; }
+.ev.imp .t { color: var(--warn); }
+.ev .w { color: var(--muted); font-size: 12px; }
+.ev .l { font-size: 13px; color: var(--muted); }
+.empty { color: var(--muted); text-align: center; padding: 40px 10px; }
+input.code { width: 100%; padding: 10px; border: 1px solid var(--line); border-radius: 10px; font: inherit;
+             background: var(--card); color: var(--text); margin-top: 8px; }
+</style>
+</head>
+<body>
+<header>
+  <h1 id="title">Мои заявки</h1>
+  <div class="sub" id="sub">Загрузка…</div>
+</header>
+<main>
+  <div id="push"></div>
+  <div class="tabs" id="tabs"></div>
+  <div id="list"></div>
+</main>
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
