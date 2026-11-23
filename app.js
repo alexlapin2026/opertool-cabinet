@@ -24,6 +24,10 @@
 
   function esc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
   function money(v) { return Number(v || 0).toLocaleString("ru-RU", { minimumFractionDigits: 0, maximumFractionDigits: 2 }) + " ₸"; }
+  function plural(n, one, few, many) {
+    var a = n % 10, b = n % 100;
+    return a === 1 && b !== 11 ? one : a >= 2 && a <= 4 && (b < 12 || b > 14) ? few : many;
+  }
   function ddmm(d) { return d.slice(8, 10) + "." + d.slice(5, 7); }
   function iso(dt) { return dt.getFullYear() + "-" + String(dt.getMonth() + 1).padStart(2, "0") + "-" + String(dt.getDate()).padStart(2, "0"); }
   var STATUS = { work: "в работе", transferred: "оформлена", deleted: "отменена" };
@@ -65,7 +69,7 @@
       state.day = days[tom] ? tom : days[today] ? today : keys[keys.length - 1];
     }
     $("tabs").innerHTML = keys.map(function (d) {
-      return '<button class="tab' + (d === state.day ? " on" : "") + '" data-d="' + d + '">' + esc(dayName(d, now)) + " · " + days[d] +
+      return '<button class="tab' + (d === state.day ? " on" : "") + '" data-d="' + d + '">' + esc(dayName(d, now)) +
         (qs[d] ? ' <span class="qn">' + qs[d] + "</span>" : "") + "</button>";
     }).join("");
     Array.prototype.forEach.call($("tabs").children, function (b) { b.onclick = function () { state.day = b.dataset.d; render(); }; });
@@ -92,7 +96,19 @@
       return '<div class="card ask"><div class="head"><div class="main"><div class="name">' + esc(i.kname) + "</div>" +
         qOpen(i) + "</div></div></div>";
     }).join("");
-    $("list").innerHTML = looseHtml + list.map(function (o) {
+    // итог дня: заявки без отменённых, сумма сейчас (меняется с каждым обходом) и при появлении
+    var live = list.filter(function (o) { return o.status !== "deleted"; });
+    var tNow = live.reduce(function (a, o) { return a + Number(o.sum_now || 0); }, 0);
+    var tFirst = live.reduce(function (a, o) { return a + Number(o.sum_first || 0); }, 0);
+    var nDel = list.length - live.length;
+    var totalHtml = list.length ? '<div class="total"><div class="tl">Итого за ' +
+      esc(dayName(state.day, now).toLowerCase()) + "</div>" +
+      '<div class="tr"><div><div class="ts">' + live.length + " " + plural(live.length, "заявка", "заявки", "заявок") + "</div>" +
+      (nDel ? '<div class="tm">отменено: ' + nDel + "</div>" : "") + "</div>" +
+      '<div class="right"><div class="ts">' + money(tNow) + "</div>" +
+      (Math.abs(tNow - tFirst) > 0.005 ? '<div class="tm">было ' + money(tFirst) + "</div>" : "") +
+      '</div></div><button class="share" id="share">Поделиться итогом дня</button></div>' : "";
+    $("list").innerHTML = totalHtml + looseHtml + list.map(function (o) {
       var es = (evs[o.order_key] || []).slice().reverse();
       var iss = byOrder[o.order_key] || [];
       var open = iss.filter(function (i) { return i.status === "open"; });
@@ -113,9 +129,47 @@
             (e.lines || []).slice(0, 30).map(function (l) { return '<div class="l">' + esc(l) + "</div>"; }).join("") + "</div>";
         }).join("") + "</div></div>";
     }).join("");
+    if ($("share")) $("share").onclick = function () { share(f.agent, state.day, live, nDel, tNow); };
     Array.prototype.forEach.call(document.querySelectorAll(".card .head"), function (h) {
       h.onclick = function () { var c = h.parentNode, k = c.dataset.k; state.open[k] = !state.open[k]; c.classList.toggle("open"); };
     });
+  }
+
+  // ---------------------------------------------------------------- итог дня в общий чат
+  function shareText(agent, day, live, nDel, total) {
+    var n = live.length;
+    var lines = [agent + " — итог за " + ddmm(day),
+      n + " " + plural(n, "заявка", "заявки", "заявок") + (nDel ? " (отменено: " + nDel + ")" : "") + " на " + money(total)];
+    live.slice().sort(function (a, b) { return a.first_at < b.first_at ? -1 : 1; }).forEach(function (o, i) {
+      lines.push((i + 1) + ". " + o.kname + (o.shop ? " №" + o.shop : "") + " — " + money(o.sum_now));
+    });
+    return lines.join("\n");
+  }
+
+  function share(agent, day, live, nDel, total) {
+    var text = shareText(agent, day, live, nDel, total), btn = $("share");
+    function copied(ok) {
+      if (!btn) return;
+      btn.textContent = ok ? "Скопировано — вставьте в чат" : "Не удалось скопировать";
+      setTimeout(function () { if ($("share")) $("share").textContent = "Поделиться итогом дня"; }, 3000);
+    }
+    if (navigator.share) {
+      navigator.share({ text: text }).catch(function (e) { if (e && e.name !== "AbortError") copy(text, copied); });
+    } else copy(text, copied);
+  }
+
+  function copy(text, done) {
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(text).then(function () { done(true); }, function () { done(fallback()); });
+    } else done(fallback());
+    function fallback() {
+      var t = document.createElement("textarea");
+      t.value = text; t.style.position = "fixed"; t.style.opacity = "0";
+      document.body.appendChild(t); t.select();
+      var ok = false; try { ok = document.execCommand("copy"); } catch (e) {}
+      document.body.removeChild(t);
+      return ok;
+    }
   }
 
   function load() {
