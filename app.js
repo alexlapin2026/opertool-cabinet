@@ -53,34 +53,61 @@
     var f = state.feed, now = f.now || iso(new Date());
     $("title").textContent = f.agent;
     $("sub").textContent = "Обновлено " + now.slice(11, 16);
-    var days = {};
+    var days = {}, qs = {}, issues = f.issues || [];
     f.orders.forEach(function (o) { days[o.day] = (days[o.day] || 0) + 1; });
+    issues.forEach(function (i) {
+      days[i.day] = days[i.day] || 0;
+      if (i.status === "open") qs[i.day] = (qs[i.day] || 0) + 1;
+    });
     var keys = Object.keys(days).sort();
     if (!state.day || !days[state.day]) {
       var today = now.slice(0, 10), tom = iso(new Date(new Date(today + "T00:00:00").getTime() + 864e5));
       state.day = days[tom] ? tom : days[today] ? today : keys[keys.length - 1];
     }
     $("tabs").innerHTML = keys.map(function (d) {
-      return '<button class="tab' + (d === state.day ? " on" : "") + '" data-d="' + d + '">' + esc(dayName(d, now)) + " · " + days[d] + "</button>";
+      return '<button class="tab' + (d === state.day ? " on" : "") + '" data-d="' + d + '">' + esc(dayName(d, now)) + " · " + days[d] +
+        (qs[d] ? ' <span class="qn">' + qs[d] + "</span>" : "") + "</button>";
     }).join("");
     Array.prototype.forEach.call($("tabs").children, function (b) { b.onclick = function () { state.day = b.dataset.d; render(); }; });
 
     var evs = {};
     f.events.forEach(function (e) { (evs[e.order_key] = evs[e.order_key] || []).push(e); });
     var list = f.orders.filter(function (o) { return o.day === state.day; });
-    if (!list.length) { $("list").innerHTML = '<div class="empty">Заявок нет</div>'; return; }
-    $("list").innerHTML = list.map(function (o) {
+    var dayIssues = issues.filter(function (i) { return i.day === state.day; }), byOrder = {}, loose = [];
+    dayIssues.forEach(function (i) {
+      var nums = (i.docs || []).map(function (d) { return d.num; });
+      var o = list.filter(function (o) { return o.docs.some(function (d) { return nums.indexOf(d.num) >= 0; }); })[0];
+      if (o) (byOrder[o.order_key] = byOrder[o.order_key] || []).push(i); else loose.push(i);
+    });
+    if (!list.length && !loose.length) { $("list").innerHTML = '<div class="empty">Заявок нет</div>'; return; }
+    function qOpen(i) {
+      return '<div class="q"><div class="qt">Вопрос: ' + esc(i.text) + "</div>" +
+        (i.detail ? '<div class="qd">' + esc(i.detail) + "</div>" : "") + "</div>";
+    }
+    function qClosed(i) {
+      return '<div class="ev"><div class="w">' + ddmm(i.closed_at) + " " + i.closed_at.slice(11, 16) + "</div>" +
+        '<div class="t ok">Вопрос снят</div><div class="l">' + esc(i.text) + "</div></div>";
+    }
+    var looseHtml = loose.filter(function (i) { return i.status === "open"; }).map(function (i) {
+      return '<div class="card ask"><div class="head"><div class="main"><div class="name">' + esc(i.kname) + "</div>" +
+        qOpen(i) + "</div></div></div>";
+    }).join("");
+    $("list").innerHTML = looseHtml + list.map(function (o) {
       var es = (evs[o.order_key] || []).slice().reverse();
+      var iss = byOrder[o.order_key] || [];
+      var open = iss.filter(function (i) { return i.status === "open"; });
+      var closed = iss.filter(function (i) { return i.status !== "open"; });
       var hot = es.some(function (e) { return e.important; });
       var diff = Math.abs(Number(o.sum_now) - Number(o.sum_first)) > 0.005;
-      return '<div class="card' + (hot ? " hot" : "") + (state.open[o.order_key] ? " open" : "") + '" data-k="' + esc(o.order_key) + '">' +
+      return '<div class="card' + (open.length ? " ask" : hot ? " hot" : "") + (state.open[o.order_key] ? " open" : "") + '" data-k="' + esc(o.order_key) + '">' +
         '<div class="head"><div class="main"><div class="name">' + esc(o.kname) + "</div>" +
         '<div class="meta">' + esc([o.shop ? "магазин №" + o.shop : "", o.stores.replace(/Склад /g, "")].filter(Boolean).join(" · ")) + "</div>" +
         '<span class="chip st-' + esc(o.status) + '">' + (STATUS[o.status] || o.status) + "</span> " +
-        (o.changes ? '<span class="chip chg">изменений: ' + o.changes + "</span>" : "") + "</div>" +
+        (o.changes ? '<span class="chip chg">изменений: ' + o.changes + "</span>" : "") +
+        open.map(qOpen).join("") + "</div>" +
         '<div class="right"><div class="sum">' + money(o.sum_now) + "</div>" +
         (diff ? '<div class="was">' + money(o.sum_first) + "</div>" : "") + "</div></div>" +
-        '<div class="events">' + es.map(function (e) {
+        '<div class="events">' + closed.map(qClosed).join("") + es.map(function (e) {
           return '<div class="ev' + (e.important ? " imp" : "") + '"><div class="w">' + ddmm(e.at) + " " + e.at.slice(11, 16) +
             " · № " + esc(e.doc_num) + "</div>" + '<div class="t">' + esc(e.title) + "</div>" +
             (e.lines || []).slice(0, 30).map(function (l) { return '<div class="l">' + esc(l) + "</div>"; }).join("") + "</div>";
@@ -133,7 +160,7 @@
           box.innerHTML = '<div class="notice">Уведомления запрещены в настройках браузера для этого сайта.</div>';
           return;
         }
-        box.innerHTML = '<div class="notice">Включите уведомления — сообщим, если заявку отменят, уберут позиции или изменится сумма.<br><button id="pb">Включить уведомления</button></div>';
+        box.innerHTML = '<div class="notice">Включите уведомления — сообщим, если заявку отменят, изменят товары, количество или сумму, или если по заявке есть вопрос.<br><button id="pb">Включить уведомления</button></div>';
         $("pb").onclick = function () {
           Notification.requestPermission().then(function (p) {
             if (p !== "granted") { pushUi(); return; }
