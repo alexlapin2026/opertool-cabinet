@@ -31,6 +31,8 @@
   function ddmm(d) { return d.slice(8, 10) + "." + d.slice(5, 7); }
   function iso(dt) { return dt.getFullYear() + "-" + String(dt.getMonth() + 1).padStart(2, "0") + "-" + String(dt.getDate()).padStart(2, "0"); }
   var STATUS = { work: "в работе", transferred: "оформлена", deleted: "отменена" };
+  var RSTATUS = { work: "в работе", transferred: "оформлен", deleted: "отменён" };
+  function isRet(o) { return o.kind === "return"; }
 
   function dayName(d, now) {
     var t = new Date(now.slice(0, 10) + "T00:00:00");
@@ -76,14 +78,15 @@
 
     var evs = {};
     f.events.forEach(function (e) { (evs[e.order_key] = evs[e.order_key] || []).push(e); });
-    var list = f.orders.filter(function (o) { return o.day === state.day; });
+    var all = f.orders.filter(function (o) { return o.day === state.day; });
+    var list = all.filter(function (o) { return !isRet(o); }), rets = all.filter(isRet);
     var dayIssues = issues.filter(function (i) { return i.day === state.day; }), byOrder = {}, loose = [];
     dayIssues.forEach(function (i) {
       var nums = (i.docs || []).map(function (d) { return d.num; });
-      var o = list.filter(function (o) { return o.docs.some(function (d) { return nums.indexOf(d.num) >= 0; }); })[0];
+      var o = list.concat(rets).filter(function (o) { return o.docs.some(function (d) { return nums.indexOf(d.num) >= 0; }); })[0];
       if (o) (byOrder[o.order_key] = byOrder[o.order_key] || []).push(i); else loose.push(i);
     });
-    if (!list.length && !loose.length) { $("list").innerHTML = '<div class="empty">Заявок нет</div>'; return; }
+    if (!all.length && !loose.length) { $("list").innerHTML = '<div class="empty">Заявок нет</div>'; return; }
     function qOpen(i) {
       return '<div class="q"><div class="qt">Вопрос: ' + esc(i.text) + "</div>" +
         (i.detail ? '<div class="qd">' + esc(i.detail) + "</div>" : "") + "</div>";
@@ -101,14 +104,18 @@
     var tNow = live.reduce(function (a, o) { return a + Number(o.sum_now || 0); }, 0);
     var tFirst = live.reduce(function (a, o) { return a + Number(o.sum_first || 0); }, 0);
     var nDel = list.length - live.length;
-    var totalHtml = list.length ? '<div class="total"><div class="tl">Итого за ' +
+    var rLive = rets.filter(function (o) { return o.status !== "deleted"; });
+    var rSum = rLive.reduce(function (a, o) { return a + Number(o.sum_now || 0); }, 0);
+    var totalHtml = all.length ? '<div class="total"><div class="tl">Итого за ' +
       esc(dayName(state.day, now).toLowerCase()) + "</div>" +
       '<div class="tr"><div><div class="ts">' + live.length + " " + plural(live.length, "заявка", "заявки", "заявок") + "</div>" +
       (nDel ? '<div class="tm">отменено: ' + nDel + "</div>" : "") + "</div>" +
       '<div class="right"><div class="ts">' + money(tNow) + "</div>" +
       (Math.abs(tNow - tFirst) > 0.005 ? '<div class="tm">было ' + money(tFirst) + "</div>" : "") +
-      '</div></div><button class="share" id="share">Поделиться итогом дня</button></div>' : "";
-    $("list").innerHTML = totalHtml + looseHtml + list.map(function (o) {
+      "</div></div>" +
+      (rLive.length ? '<div class="tret"><span>Возвраты: ' + rLive.length + "</span><b>" + money(rSum) + "</b></div>" : "") +
+      '<button class="share" id="share">Поделиться итогом дня</button></div>' : "";
+    function card(o) {
       var es = (evs[o.order_key] || []).slice().reverse();
       var iss = byOrder[o.order_key] || [];
       var open = iss.filter(function (i) { return i.status === "open"; });
@@ -118,7 +125,8 @@
       return '<div class="card' + (open.length ? " ask" : hot ? " hot" : "") + (state.open[o.order_key] ? " open" : "") + '" data-k="' + esc(o.order_key) + '">' +
         '<div class="head"><div class="main"><div class="name">' + esc(o.kname) + "</div>" +
         '<div class="meta">' + esc([o.shop ? "магазин №" + o.shop : "", o.stores.replace(/Склад /g, "")].filter(Boolean).join(" · ")) + "</div>" +
-        '<span class="chip st-' + esc(o.status) + '">' + (STATUS[o.status] || o.status) + "</span> " +
+        (isRet(o) ? '<span class="chip ret">возврат</span> ' : "") +
+        '<span class="chip st-' + esc(o.status) + '">' + ((isRet(o) ? RSTATUS : STATUS)[o.status] || o.status) + "</span> " +
         (o.changes ? '<span class="chip chg">изменений: ' + o.changes + "</span>" : "") +
         open.map(qOpen).join("") + "</div>" +
         '<div class="right"><div class="sum">' + money(o.sum_now) + "</div>" +
@@ -128,26 +136,34 @@
             " · № " + esc(e.doc_num) + "</div>" + '<div class="t">' + esc(e.title) + "</div>" +
             (e.lines || []).slice(0, 30).map(function (l) { return '<div class="l">' + esc(l) + "</div>"; }).join("") + "</div>";
         }).join("") + "</div></div>";
-    }).join("");
-    if ($("share")) $("share").onclick = function () { share(f.agent, state.day, live, nDel, tNow); };
+    }
+    $("list").innerHTML = totalHtml + looseHtml + list.map(card).join("") +
+      (rets.length ? '<div class="sect">Возвраты</div>' + rets.map(card).join("") : "");
+    if ($("share")) $("share").onclick = function () { share(f.agent, state.day, live, nDel, tNow, rLive, rSum); };
     Array.prototype.forEach.call(document.querySelectorAll(".card .head"), function (h) {
       h.onclick = function () { var c = h.parentNode, k = c.dataset.k; state.open[k] = !state.open[k]; c.classList.toggle("open"); };
     });
   }
 
   // ---------------------------------------------------------------- итог дня в общий чат
-  function shareText(agent, day, live, nDel, total) {
+  function shareText(agent, day, live, nDel, total, rLive, rSum) {
     var n = live.length;
     var lines = [agent + " — итог за " + ddmm(day),
       n + " " + plural(n, "заявка", "заявки", "заявок") + (nDel ? " (отменено: " + nDel + ")" : "") + " на " + money(total)];
     live.slice().sort(function (a, b) { return a.first_at < b.first_at ? -1 : 1; }).forEach(function (o, i) {
       lines.push((i + 1) + ". " + o.kname + (o.shop ? " №" + o.shop : "") + " — " + money(o.sum_now));
     });
+    if (rLive && rLive.length) {
+      lines.push("Возвраты: " + rLive.length + " на " + money(rSum));
+      rLive.forEach(function (o, i) {
+        lines.push((i + 1) + ". " + o.kname + (o.shop ? " №" + o.shop : "") + " — " + money(o.sum_now));
+      });
+    }
     return lines.join("\n");
   }
 
-  function share(agent, day, live, nDel, total) {
-    var text = shareText(agent, day, live, nDel, total), btn = $("share");
+  function share(agent, day, live, nDel, total, rLive, rSum) {
+    var text = shareText(agent, day, live, nDel, total, rLive, rSum), btn = $("share");
     function copied(ok) {
       if (!btn) return;
       btn.textContent = ok ? "Скопировано — вставьте в чат" : "Не удалось скопировать";
@@ -214,7 +230,7 @@
           box.innerHTML = '<div class="notice">Уведомления запрещены в настройках браузера для этого сайта.</div>';
           return;
         }
-        box.innerHTML = '<div class="notice">Включите уведомления — сообщим, если заявку отменят, изменят товары, количество или сумму, или если по заявке есть вопрос.<br><button id="pb">Включить уведомления</button></div>';
+        box.innerHTML = '<div class="notice">Включите уведомления — сообщим, если заявку или возврат отменят, изменят товары, количество или сумму, или если по заявке есть вопрос.<br><button id="pb">Включить уведомления</button></div>';
         $("pb").onclick = function () {
           Notification.requestPermission().then(function (p) {
             if (p !== "granted") { pushUi(); return; }
