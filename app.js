@@ -28,6 +28,7 @@
     var a = n % 10, b = n % 100;
     return a === 1 && b !== 11 ? one : a >= 2 && a <= 4 && (b < 12 || b > 14) ? few : many;
   }
+  function qty(v) { return Number(v || 0).toLocaleString("ru-RU", { maximumFractionDigits: 3 }); }
   function ddmm(d) { return d.slice(8, 10) + "." + d.slice(5, 7); }
   function iso(dt) { return dt.getFullYear() + "-" + String(dt.getMonth() + 1).padStart(2, "0") + "-" + String(dt.getDate()).padStart(2, "0"); }
   var STATUS = { work: "в работе", transferred: "оформлена", deleted: "отменена" };
@@ -122,6 +123,7 @@
       var closed = iss.filter(function (i) { return i.status !== "open"; });
       var hot = es.some(function (e) { return e.important; });
       var diff = Math.abs(Number(o.sum_now) - Number(o.sum_first)) > 0.005;
+      var lines = o.lines || [];
       return '<div class="card' + (open.length ? " ask" : hot ? " hot" : "") + (state.open[o.order_key] ? " open" : "") + '" data-k="' + esc(o.order_key) + '">' +
         '<div class="head"><div class="main"><div class="name">' + esc(o.kname) + "</div>" +
         '<div class="meta">' + esc([o.shop ? "магазин №" + o.shop : "", o.stores.replace(/Склад /g, "")].filter(Boolean).join(" · ")) + "</div>" +
@@ -130,8 +132,18 @@
         (o.changes ? '<span class="chip chg">изменений: ' + o.changes + "</span>" : "") +
         open.map(qOpen).join("") + "</div>" +
         '<div class="right"><div class="sum">' + money(o.sum_now) + "</div>" +
-        (diff ? '<div class="was">' + money(o.sum_first) + "</div>" : "") + "</div></div>" +
-        '<div class="events">' + closed.map(qClosed).join("") + es.map(function (e) {
+        (diff ? '<div class="was">' + money(o.sum_first) + "</div>" : "") +
+        (lines.length ? '<div class="more">' + lines.length + " поз. ▾</div>" : "") + "</div></div>" +
+        '<div class="events">' + (lines.length ? '<div class="items">' + lines.map(function (l) {
+          return '<div class="it"><div class="in">' + esc(l.name) + '</div><div class="iq">' + qty(l.qty) + " × " +
+            money(l.price) + '</div><div class="is">' + money(l.sum) + "</div></div>";
+        }).join("") + "</div>" : "") +
+        (o.docs.length > 1 || o.docs.some(function (d) { return d.dst; })
+          ? '<div class="docs">' + o.docs.map(function (d) {
+              return "№ " + esc(d.num) + (d.store ? " · " + esc(d.store.replace(/Склад /g, "")) : "") +
+                (d.dst ? " → " + esc(d.dst) : "") + (d.state === "deleted" ? " (удалён)" : "");
+            }).join("<br>") + "</div>" : "") +
+        closed.map(qClosed).join("") + es.map(function (e) {
           return '<div class="ev' + (e.important ? " imp" : "") + '"><div class="w">' + ddmm(e.at) + " " + e.at.slice(11, 16) +
             " · № " + esc(e.doc_num) + "</div>" + '<div class="t">' + esc(e.title) + "</div>" +
             (e.lines || []).slice(0, 30).map(function (l) { return '<div class="l">' + esc(l) + "</div>"; }).join("") + "</div>";
