@@ -28,6 +28,23 @@
     var a = n % 10, b = n % 100;
     return a === 1 && b !== 11 ? one : a >= 2 && a <= 4 && (b < 12 || b > 14) ? few : many;
   }
+  // районы дня: что вписано на этот день; иначе — по маршруту (OperTool «Маршруты торговых»: строки
+  // с этим днём вывоза); иначе — с того же дня недели прошлых недель (маршруты повторяются)
+  var WD = ["вс", "пн", "вт", "ср", "чт", "пт", "сб"];
+  function areaOf(day) {
+    var v = store("ot_area_" + day);
+    if (v !== null && v !== undefined) return v;
+    var t = new Date(day + "T00:00:00");
+    var route = (state.feed && state.feed.route && state.feed.route.rows) || [];
+    var byRoute = route.filter(function (r) { return r.ship_day === WD[t.getDay()] && r.area; })
+      .map(function (r) { return r.area; });
+    if (byRoute.length) return "Район, " + byRoute.join(", ");
+    for (var w = 1; w <= 4; w++) {
+      var p = store("ot_area_" + iso(new Date(t.getTime() - w * 7 * 864e5)));
+      if (p) return p;
+    }
+    return "";
+  }
   function qty(v) { return Number(v || 0).toLocaleString("ru-RU", { maximumFractionDigits: 3 }); }
   function ddmm(d) { return d.slice(8, 10) + "." + d.slice(5, 7); }
   function iso(dt) { return dt.getFullYear() + "-" + String(dt.getMonth() + 1).padStart(2, "0") + "-" + String(dt.getDate()).padStart(2, "0"); }
@@ -115,6 +132,8 @@
       (Math.abs(tNow - tFirst) > 0.005 ? '<div class="tm">было ' + money(tFirst) + "</div>" : "") +
       "</div></div>" +
       (rLive.length ? '<div class="tret"><span>Возвраты: ' + rLive.length + "</span><b>" + money(rSum) + "</b></div>" : "") +
+      '<input class="area" id="area" placeholder="Районы: Химпас, 1, 2, 3, 4 мкр" value="' +
+      esc(areaOf(state.day)) + '">' +
       '<button class="share" id="share">Поделиться итогом дня</button></div>' : "";
     function card(o) {
       var es = (evs[o.order_key] || []).slice().reverse();
@@ -151,6 +170,7 @@
     }
     $("list").innerHTML = totalHtml + looseHtml + list.map(card).join("") +
       (rets.length ? '<div class="sect">Возвраты</div>' + rets.map(card).join("") : "");
+    if ($("area")) $("area").oninput = function () { store("ot_area_" + state.day, this.value); };
     if ($("share")) $("share").onclick = function () { share(f.agent, state.day, live, nDel, tNow, rLive, rSum); };
     Array.prototype.forEach.call(document.querySelectorAll(".card .head"), function (h) {
       h.onclick = function () { var c = h.parentNode, k = c.dataset.k; state.open[k] = !state.open[k]; c.classList.toggle("open"); };
@@ -159,18 +179,11 @@
 
   // ---------------------------------------------------------------- итог дня в общий чат
   function shareText(agent, day, live, nDel, total, rLive, rSum) {
-    var n = live.length;
-    var lines = [agent + " — итог за " + ddmm(day),
-      n + " " + plural(n, "заявка", "заявки", "заявок") + (nDel ? " (отменено: " + nDel + ")" : "") + " на " + money(total)];
-    live.slice().sort(function (a, b) { return a.first_at < b.first_at ? -1 : 1; }).forEach(function (o, i) {
-      lines.push((i + 1) + ". " + o.kname + (o.shop ? " №" + o.shop : "") + " — " + money(o.sum_now));
-    });
-    if (rLive && rLive.length) {
-      lines.push("Возвраты: " + rLive.length + " на " + money(rSum));
-      rLive.forEach(function (o, i) {
-        lines.push((i + 1) + ". " + o.kname + (o.shop ? " №" + o.shop : "") + " — " + money(o.sum_now));
-      });
-    }
+    // коротко, как торговые пишут в общий чат: кто, сколько заявок, на какую сумму
+    function num(v) { return Math.round(Number(v || 0)).toLocaleString("ru-RU").replace(/\s/g, " "); }
+    var lines = ["ТА " + agent, "Заявок " + live.length, "Сумма " + num(total)];
+    var area = areaOf(day).trim();
+    if (area) lines.push(area);
     return lines.join("\n");
   }
 
@@ -207,6 +220,7 @@
     rpc("agent_feed", { p_token: t }).then(function (f) {
       if (f.error) { askCode("Ссылка больше не действует. Попросите у оператора новую."); return; }
       state.feed = f;
+      if (document.activeElement && document.activeElement.id === "area") return; // не сбивать ввод районов
       render();
       pushUi();
     }).catch(function () {
@@ -219,7 +233,12 @@
     var p = "=".repeat((4 - s.length % 4) % 4), raw = atob((s + p).replace(/-/g, "+").replace(/_/g, "/"));
     return Uint8Array.from(raw, function (c) { return c.charCodeAt(0); });
   }
-  var standalone = window.matchMedia("(display-mode: standalone)").matches || navigator.standalone;
+  function sameKey(a, b) {
+    if (a.length !== b.length) return false;
+    for (var i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+    return true;
+  }
+  var standalone =window.matchMedia("(display-mode: standalone)").matches || navigator.standalone;
   var ios = /iPhone|iPad|iPod/.test(navigator.userAgent);
 
   function pushUi() {
@@ -233,6 +252,15 @@
     }
     navigator.serviceWorker.register("sw.js").then(function (reg) {
       return reg.pushManager.getSubscription().then(function (sub) {
+        var k = sub && sub.options && sub.options.applicationServerKey;
+        if (k && Notification.permission === "granted" && !sameKey(new Uint8Array(k), b64(C.vapidPublicKey))) {
+          // ключ уведомлений на сервере сменили — старая подписка не принимает уведомления, переподписаться
+          return sub.unsubscribe().then(function () {
+            return reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64(C.vapidPublicKey) });
+          }).then(function (s) {
+            return rpc("agent_subscribe", { p_token: token(), p_sub: s.toJSON() });
+          }).then(function () { box.innerHTML = ""; }).catch(function () { pushUi(); });
+        }
         if (sub && Notification.permission === "granted") {
           rpc("agent_subscribe", { p_token: token(), p_sub: sub.toJSON() }).catch(function () {});
           box.innerHTML = "";
