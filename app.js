@@ -4,7 +4,7 @@
   "use strict";
   var C = window.OPERTOOL || {};
   var $ = function (id) { return document.getElementById(id); };
-  var state = { feed: null, day: null, open: {} };
+  var state = { feed: null, day: null, open: {}, kind: store("ot_kind") || "all" };
 
   function store(k, v) { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) { return null; } }
 
@@ -58,10 +58,18 @@
     return (names[d] ? names[d] + ", " : "") + ddmm(d);
   }
 
+  // подпись таба дня: «Вчера / Сегодня / Завтра», дальше — день недели; под ней дата
+  var WDN = ["Вс", "Пн", "Вт", "Ср", "Чт", "Пт", "Сб"];
+  function tabName(d, now) {
+    var n = dayName(d, now), i = n.indexOf(",");
+    return i > 0 ? n.slice(0, i) : WDN[new Date(d + "T00:00:00").getDay()];
+  }
+
   function askCode(msg) {
     $("title").textContent = "Мои заявки";
     $("sub").textContent = "";
     $("tabs").innerHTML = "";
+    $("seg").innerHTML = "";
     $("push").innerHTML = "";
     $("list").innerHTML = '<div class="notice">' + esc(msg) +
       '<input class="code" id="code" placeholder="Вставьте ссылку или код от оператора">' +
@@ -78,7 +86,10 @@
     $("title").textContent = f.agent;
     $("sub").textContent = "Обновлено " + now.slice(11, 16);
     var days = {}, qs = {}, issues = f.issues || [];
-    f.orders.forEach(function (o) { days[o.day] = (days[o.day] || 0) + 1; });
+    f.orders.forEach(function (o) {
+      days[o.day] = (days[o.day] || 0) + 1;
+      if (o.problem && !o.problem.fixed) qs[o.day] = (qs[o.day] || 0) + 1;  // неоформленный возврат
+    });
     issues.forEach(function (i) {
       days[i.day] = days[i.day] || 0;
       if (i.status === "open") qs[i.day] = (qs[i.day] || 0) + 1;
@@ -88,9 +99,11 @@
       var today = now.slice(0, 10), tom = iso(new Date(new Date(today + "T00:00:00").getTime() + 864e5));
       state.day = days[tom] ? tom : days[today] ? today : keys[keys.length - 1];
     }
+    $("tabs").className = "tabs" + (keys.length >= 6 ? " many" : "");
     $("tabs").innerHTML = keys.map(function (d) {
-      return '<button class="tab' + (d === state.day ? " on" : "") + '" data-d="' + d + '">' + esc(dayName(d, now)) +
-        (qs[d] ? ' <span class="qn">' + qs[d] + "</span>" : "") + "</button>";
+      return '<button class="tab' + (d === state.day ? " on" : "") + '" data-d="' + d + '">' +
+        '<span class="tn">' + esc(tabName(d, now)) + "</span>" +
+        '<span class="td">' + ddmm(d) + (qs[d] ? '<span class="qn">' + qs[d] + "</span>" : "") + "</span></button>";
     }).join("");
     Array.prototype.forEach.call($("tabs").children, function (b) { b.onclick = function () { state.day = b.dataset.d; render(); }; });
 
@@ -98,6 +111,16 @@
     f.events.forEach(function (e) { (evs[e.order_key] = evs[e.order_key] || []).push(e); });
     var all = f.orders.filter(function (o) { return o.day === state.day; });
     var list = all.filter(function (o) { return !isRet(o); }), rets = all.filter(isRet);
+    // фильтр по типу — только когда в дне есть и заявки, и возвраты
+    var kind = list.length && rets.length ? state.kind : "all";
+    $("seg").innerHTML = list.length && rets.length ? '<div class="seg">' + [["all", "Все", all.length],
+      ["order", "Заявки", list.length], ["return", "Возвраты", rets.length]].map(function (x) {
+        return '<button data-k="' + x[0] + '"' + (x[0] === kind ? ' class="on"' : "") + ">" + x[1] +
+          '<span class="c">' + x[2] + "</span></button>";
+      }).join("") + "</div>" : "";
+    Array.prototype.forEach.call(document.querySelectorAll("#seg button"), function (b) {
+      b.onclick = function () { state.kind = b.dataset.k; store("ot_kind", state.kind); render(); };
+    });
     var dayIssues = issues.filter(function (i) { return i.day === state.day; }), byOrder = {}, loose = [];
     dayIssues.forEach(function (i) {
       var nums = (i.docs || []).map(function (d) { return d.num; });
@@ -108,6 +131,16 @@
     function qOpen(i) {
       return '<div class="q"><div class="qt">Вопрос: ' + esc(i.text) + "</div>" +
         (i.detail ? '<div class="qd">' + esc(i.detail) + "</div>" : "") + "</div>";
+    }
+    // возврат не оформлен: в накладных точки нет продажи этого товара (sync-returns.py)
+    function pOpen(p) {
+      return '<div class="q' + (p.fixed ? " fx" : "") + '"><div class="qt">' +
+        (p.fixed ? "Возврат исправлен, ждёт оформления" : "Возврат не оформлен: нет продажи этого товара") + "</div>" +
+        '<div class="qd">' + (p.fixed ? "Проверим при следующем переносе." :
+          "В накладных точки за год не хватает товара. Проверьте точку, позиции и количество.") + "</div>" +
+        (p.items || []).map(function (x) {
+          return '<div class="qd">' + esc(x.name) + ": не хватает " + qty(x.qty) + "</div>";
+        }).join("") + "</div>";
     }
     function qClosed(i) {
       return '<div class="ev"><div class="w">' + ddmm(i.closed_at) + " " + i.closed_at.slice(11, 16) + "</div>" +
@@ -139,17 +172,18 @@
       var es = (evs[o.order_key] || []).slice().reverse();
       var iss = byOrder[o.order_key] || [];
       var open = iss.filter(function (i) { return i.status === "open"; });
+      var prob = o.problem && !o.problem.fixed;
       var closed = iss.filter(function (i) { return i.status !== "open"; });
       var hot = es.some(function (e) { return e.important; });
       var diff = Math.abs(Number(o.sum_now) - Number(o.sum_first)) > 0.005;
       var lines = o.lines || [];
-      return '<div class="card' + (open.length ? " ask" : hot ? " hot" : "") + (state.open[o.order_key] ? " open" : "") + '" data-k="' + esc(o.order_key) + '">' +
+      return '<div class="card' + (open.length || prob ? " ask" : hot ? " hot" : "") + (state.open[o.order_key] ? " open" : "") + '" data-k="' + esc(o.order_key) + '">' +
         '<div class="head"><div class="main"><div class="name">' + esc(o.kname) + "</div>" +
         '<div class="meta">' + esc([o.shop ? "магазин №" + o.shop : "", o.stores.replace(/Склад /g, "")].filter(Boolean).join(" · ")) + "</div>" +
         (isRet(o) ? '<span class="chip ret">возврат</span> ' : "") +
         '<span class="chip st-' + esc(o.status) + '">' + ((isRet(o) ? RSTATUS : STATUS)[o.status] || o.status) + "</span> " +
         (o.changes ? '<span class="chip chg">изменений: ' + o.changes + "</span>" : "") +
-        open.map(qOpen).join("") + "</div>" +
+        (o.problem ? pOpen(o.problem) : "") + open.map(qOpen).join("") + "</div>" +
         '<div class="right"><div class="sum">' + money(o.sum_now) + "</div>" +
         (diff ? '<div class="was">' + money(o.sum_first) + "</div>" : "") +
         (lines.length ? '<div class="more">' + lines.length + " поз. ▾</div>" : "") + "</div></div>" +
@@ -168,8 +202,9 @@
             (e.lines || []).slice(0, 30).map(function (l) { return '<div class="l">' + esc(l) + "</div>"; }).join("") + "</div>";
         }).join("") + "</div></div>";
     }
-    $("list").innerHTML = totalHtml + looseHtml + list.map(card).join("") +
-      (rets.length ? '<div class="sect">Возвраты</div>' + rets.map(card).join("") : "");
+    $("list").innerHTML = (kind === "return" ? "" : totalHtml + looseHtml + list.map(card).join("")) +
+      (rets.length && kind !== "order" ? (kind === "all" ? '<div class="sect">Возвраты</div>' : "") +
+        rets.map(card).join("") : "");
     if ($("area")) $("area").oninput = function () { store("ot_area_" + state.day, this.value); };
     if ($("share")) $("share").onclick = function () { share(f.agent, state.day, live, nDel, tNow, rLive, rSum); };
     Array.prototype.forEach.call(document.querySelectorAll(".card .head"), function (h) {
@@ -283,8 +318,22 @@
     }).catch(function () { box.innerHTML = ""; });
   }
 
+  // новая версия кабинета выложена — перезагрузиться (адрес с ?v= — чтобы и страница пришла новая)
+  var verAt = Date.now();
+  function checkVersion(force) {
+    if (!window.APP_VER || (!force && Date.now() - verAt < 10 * 60000)) return;
+    verAt = Date.now();
+    fetch("version.json?_=" + Date.now(), { cache: "no-store" })
+      .then(function (r) { return r.ok ? r.json() : {}; })
+      .then(function (j) {
+        if (!j.v || j.v === window.APP_VER) return;
+        if (document.activeElement && document.activeElement.id === "area") return; // не сбивать ввод
+        location.replace(location.pathname + "?v=" + encodeURIComponent(j.v) + location.hash);
+      }, function () {});
+  }
+
   load();
   window.addEventListener("hashchange", load);
-  setInterval(function () { if (!document.hidden) load(); }, 60000);
-  document.addEventListener("visibilitychange", function () { if (!document.hidden) load(); });
+  setInterval(function () { if (!document.hidden) { load(); checkVersion(false); } }, 60000);
+  document.addEventListener("visibilitychange", function () { if (!document.hidden) { load(); checkVersion(true); } });
 })();
